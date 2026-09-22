@@ -41,50 +41,79 @@ To ensure the bucket automatically empties objects 23 hours after creation:
    4. Click Edit Code. Paste the following optimized code into your worker.js file:
 
 ```code
+
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const objectName = url.pathname.slice(1); // Removes the leading '/'
+    const objectPath = url.pathname;
 
-    // If no specific object name is provided in the path, return 404
-    if (!objectName || objectName === "") {
-      return new Response("Not Found", { status: 404 });
+    // 1. ROOT GUARD: Stop bare URL access instantly
+    if (objectPath === "/" || objectPath === "" || objectPath === "/index.html") {
+      return new Response(
+        `<!DOCTYPE html>
+<html>
+<head><title>404 Not Found</title></head>
+<body style="font-family: sans-serif; text-align: center; padding: 50px;">
+  <h1>404 Not Found</h1>
+  <p>The requested URL was not found on this server.</p>
+</body>
+</html>`,
+        {
+          status: 404,
+          headers: { "Content-Type": "text/html; charset=utf-8" }
+        }
+      );
     }
 
-    // Read the base OCI PAR URL from environment variables
-    let baseParUrl = env.OCI_PAR_URL;
-    if (!baseParUrl.endsWith('/')) {
-      baseParUrl += '/';
+    // 2. READ SECURE ENVIRONMENT VARIABLE
+    // env.OCI_PAR_BASE binds directly to the secret variable you created in Step 1
+    const OCI_PAR_BASE = env.OCI_PAR_BASE;
+
+    // Safety fallback: if you forgot to add the environment variable, drop a 500 error
+    if (!OCI_PAR_BASE) {
+      return new Response("Configuration Error: Missing Secret Key", { status: 500 });
     }
 
-    // Construct the direct URL to the requested object
-    const targetUrl = `${baseParUrl}${objectName}`;
+    try {
+      // 3. SMART URL STITCHING: Combines PAR base with object name safely
+      const ociTargetUrl = new URL(objectPath.substring(1), OCI_PAR_BASE).toString();
 
-    // Fetch the file from Oracle Object Storage
-    const ociResponse = await fetch(targetUrl);
+      // 4. Fetch the specific file from Oracle behind the scenes
+      const ociResponse = await fetch(ociTargetUrl, {
+        method: request.method,
+        headers: request.headers,
+        redirect: "follow"
+      });
 
-    // If Oracle returns an error, forward a 404 or its original status
-    if (!ociResponse.ok) {
-      return new Response("Object Not Found", { status: 404 });
+      // 5. If file doesn't exist in Oracle, surface clean 404
+      if (!ociResponse.ok) {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      // 6. Return the file stream back to the browser seamlessly
+      const responseHeaders = new Headers(ociResponse.headers);
+      return new Response(ociResponse.body, {
+        status: ociResponse.status,
+        statusText: ociResponse.statusText,
+        headers: responseHeaders
+      });
+
+    } catch (error) {
+      return new Response("Internal Server Error", { status: 500 });
     }
-
-    // Create a new response with the object data and force a download header
-    const responseHeaders = new Headers(ociResponse.headers);
-    responseHeaders.set("Content-Disposition", `attachment; filename="${objectName}"`);
-
-    return new Response(ociResponse.body, {
-      status: ociResponse.status,
-      headers: responseHeaders
-    });
   }
 };
+
+
+
 ```
 
    1. Click Deploy (top right).
    2. Go back to your Worker's settings page by clicking the back arrow next to the project name.
    3. Go to the Settings tab → Variables.
    4. Under Environment Variables, click Add.
-   5. Set the key Name as OCI_PAR_URL and paste your copied Oracle Bucket PAR URL into the Value field.
+   5. Set the key Name as OCI_PAR_BASE and paste your copied Oracle Bucket PAR URL into the Value field.
    6. Click Save and deploy.
    7. Copy your Worker's Production URL (e.g., https://oci-bucket-proxy.<your-subdomain>.workers.dev).
 
@@ -110,7 +139,7 @@ export default {
 Before proceeding to the function deployment, compile your configuration list:
 
 * 
-* WORKER_URL: The Cloudflare worker URL (e.g., https://workers.dev)
+* WORKER_BASE_URL: The Cloudflare worker URL (e.g., https://workers.dev)
 * 
 * OCI_PAR_URL: The full URL string generated from Step 1.
 * SMTP_HOST: The endpoint gathered from Email Delivery Configuration.
@@ -124,7 +153,7 @@ Before proceeding to the function deployment, compile your configuration list:
 * SENDER_EMAIL: The verified Approved Sender email.
 * 
 * RECEIVER_EMAIL: The destination address where notifications should land.
-* 
+* WORKER_PAR_URL created in begging or this article 
 
 ------------------------------
 ## Step 6: Create, Configure, and Deploy the OCI Function
@@ -139,58 +168,95 @@ Before proceeding to the function deployment, compile your configuration list:
    4. Replace the contents of func.py with an implementation that connects to the bucket, fetches the newest object, and fires the email:
 
 ```code
-import ioimport jsonimport loggingimport osimport smtplibfrom email.mime.text import MIMETextimport requests
+
+
+cat << 'EOF' > func.py
+import io
+import json
+import logging
+import os
+import urllib.request
+import smtplib
+from email.message import EmailMessage
+from fdk import response
+
 def handler(ctx, data: io.BytesIO = None):
-    logging.getLogger().info("OCI Function Triggered.")
+    logging.getLogger().info("Oracle Function triggering custom SMTP execution plane...")
     
-    # Load Environment Configurations
-    worker_url = os.environ.get("WORKER_URL")
-    par_url = os.environ.get("OCI_PAR_URL")
-    smtp_host = os.environ.get("SMTP_HOST")
-    smtp_user = os.environ.get("SMTP_USER")
-    smtp_pass = os.environ.get("SMTP_PASS")
-    smtp_port = int(os.environ.get("SMTP_PORT", 587))
-    sender = os.environ.get("SENDER_EMAIL")
-    receiver = os.environ.get("RECEIVER_EMAIL")
-
+    # 1. RETRIEVE ENVIRONMENT SETTINGS
+    WORKER_BASE_URL = os.environ.get("WORKER_BASE_URL")
+    BUCKET_PAR_URL = os.environ.get("BUCKET_PAR_URL")
+    
+    # CUSTOM SMTP CONFIGURATION VARIABLES
+    SMTP_HOST = os.environ.get("SMTP_HOST")       # e.g., ://yourserver.com
+    SMTP_PORT = os.environ.get("SMTP_PORT", 587) # Default to standard TLS port 587
+    SMTP_USER = os.environ.get("SMTP_USER")       # Mail server login username
+    SMTP_PASS = os.environ.get("SMTP_PASS")       # Mail server login password
+    SENDER_EMAIL = os.environ.get("SENDER_EMAIL")   # Authorized From: email address
+    RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL") # Destination inbox address
+    
+    if not all([WORKER_BASE_URL, BUCKET_PAR_URL, SMTP_HOST, SMTP_USER, SMTP_PASS, SENDER_EMAIL, RECEIVER_EMAIL]):
+        return response.Response(ctx, response_data="Configuration Error: Missing environment variables.", status_code=500)
+    
     try:
-        # 1. Fetch bucket objects using listing enabled PAR URL
-        # OCI listing returns XML/JSON depending on target format. Cleanest way is parsing standard OCI listing
-        response = requests.get(par_url)
-        if response.status_code != 200:
-            raise Exception("Failed to list bucket objects via PAR URL.")
-        
-        # Simple extraction assumes JSON response for bucket-level listing metadata
-        bucket_data = response.json()
-        objects = bucket_data.get("objects", [])
-        
-        if not objects:
-            return response.Response(ctx, response_data="No objects found in bucket.", headers={"Content-Type": "text/plain"})
-        
-        # Sort objects by creation time to grab the absolute latest item
-        latest_object = max(objects, key=lambda x: x.get("timeCreated"))
-        latest_name = latest_object.get("name")
-        
-        # 2. Build worker attachment link
-        download_link = f"{worker_url.rstrip('/')}/{latest_name}"
-        
-        # 3. Formulate and send the SMTP email
-        msg = MIMEText(f"A new report object has been generated.\n\nYou can download the latest top object directly from this worker link:\n{download_link}")
-        msg['Subject'] = f"New OCI Report Available: {latest_name}"
-        msg['From'] = sender
-        msg['To'] = receiver
-        
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(sender, [receiver], msg.as_string())
-            
-        logging.getLogger().info("Notification Email Sent successfully.")
-        return response.Response(ctx, response_data="Success", headers={"Content-Type": "text/plain"})
+        # 2. SANITIZE BUCKET PAR URL PATH FORMAT
+        if not BUCKET_PAR_URL.endswith('/o/') and not BUCKET_PAR_URL.endswith('/o'):
+            if BUCKET_PAR_URL.endswith('/'):
+                BUCKET_PAR_URL = BUCKET_PAR_URL + "o/"
+            else:
+                BUCKET_PAR_URL = BUCKET_PAR_URL + "/o/"
+        elif BUCKET_PAR_URL.endswith('/o'):
+            BUCKET_PAR_URL = BUCKET_PAR_URL + "/"
 
+        # 3. HTTP GET REQUEST TO THE BUCKET PAR URL
+        req_bucket = urllib.request.Request(BUCKET_PAR_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req_bucket) as res:
+            response_data = json.loads(res.read().decode('utf-8'))
+            
+        objects = response_data.get("objects", [])
+        if not objects:
+            return response.Response(ctx, response_data="Bucket is completely empty via PAR access.", status_code=200)
+        
+        # 4. CHRONOLOGICAL SORTING (NEWEST FIRST)
+        objects.sort(key=lambda obj: obj.get("timeCreated", ""), reverse=True)
+        latest_object = objects[0]
+        object_name = latest_object.get("name")
+        time_created = latest_object.get("timeCreated")
+        
+        # 5. STITCH CLEAN CLOUDFLARE WORKER LINK
+        final_shareable_url = f"{WORKER_BASE_URL.rstrip('/')}/{object_name}"
+        
+        # 6. ASSEMBLE STANDARD SMTP MAIL CONTAINER
+        msg = EmailMessage()
+        msg['Subject'] = f"🚀 Custom SMTP Asset Alert: {object_name}"
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
+        
+        email_body = (
+            f"The automated pipeline has scanned your bucket via your secure PAR URL configuration.\n\n"
+            f"Latest File Name Identified: {object_name}\n"
+            f"Time Created: {time_created}\n\n"
+            f"Your Secure Cloudflare Worker Link:\n{final_shareable_url}"
+        )
+        msg.set_content(email_body)
+        
+        # 7. ESTABLISH TLS CONNECTION AND TRANSMIT
+        port_int = int(SMTP_PORT)
+        with smtplib.SMTP(SMTP_HOST, port_int) as server:
+            server.ehlo()
+            if port_int == 587:
+                server.starttls() # Initiate secure handshake if utilizing standard submission port
+                server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+            
+        return response.Response(ctx, response_data=f"Success! Custom SMTP email sent for: {object_name}", status_code=200)
+            
     except Exception as ex:
-        logging.getLogger().error(f"Error executing function: {str(ex)}")
-        return response.Response(ctx, response_data=f"Error: {str(ex)}", headers={"Content-Type": "text/plain"})
+        logging.getLogger().error(f"Function processing failure: {str(ex)}")
+        return response.Response(ctx, response_data=f"Custom SMTP Execution error: {str(ex)}", status_code=500)
+EOF
+
 
 
 ```
@@ -201,10 +267,35 @@ def handler(ctx, data: io.BytesIO = None):
 
 
 5.then create requirements.txt
+```code
 
+cat << 'EOF' > requirements.txt
+fdk>=0.1.60
+EOF
+
+
+
+```
 
 
 6. Then create func.yaml there
+
+```code
+
+cat << 'EOF' > func.yaml
+schema_version: 20180708
+name: daily_compartment_bill
+version: 0.0.1
+runtime: python
+build_image: fnproject/python:3.11-dev
+run_image: fnproject/python:3.11
+entrypoint: func.handler
+memory: 256
+EOF
+
+
+
+```
 
 
    1. Deploy the application using the CLI:
