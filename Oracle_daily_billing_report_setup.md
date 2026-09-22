@@ -5,13 +5,15 @@ Here are the complete, step-by-step manual instructions to set up the automated 
    1. Log in to the OCI Cloud Console.
    2. Open the navigation menu, go to Storage, and click Buckets.
    3. Select your Compartment and click Create Bucket. Name your bucket (e.g., report-bucket) and leave other settings as default. Click Create.
-   4. Click on your newly created bucket name to open its details page.
-   5. Under Resources (bottom left), click Pre-Authenticated Requests (PAR).
-   6. Click Create Pre-Authenticated Request.
-   7. Configure the PAR:
+   
+   5. Click on your newly created bucket name to open its details page.
+   6. Under Resources (bottom left), click Pre-Authenticated Requests (PAR).
+   7. Click Create Pre-Authenticated Request.
+   8. Configure the PAR:
    * Name: worker-access-par
       * Bucket/Object: Select Bucket (this targets the entire bucket).
       * Permissions: Select Permit object reads and room listing (ensures reading and listing are enabled).
+      *  Make sure to enable the toggle object listing other wise url wouldn't show any object from the respective bucket 
       * Expiration: Set a far-future expiration date according to your requirements.
    8. Click Create Pre-Authenticated Request.
    9. CRITICAL: Copy the generated Pre-Authenticated Request URL immediately. It will not be shown again. (Example format: https://objectstorage.<region>://<token>/n/<namespace>/b/<bucket>/o/)
@@ -101,7 +103,7 @@ export default {
    3. Navigate to Networking → DNS Management → Zones in OCI (or your custom domain provider like Cloudflare) to add your records:
    * SPF: Add a TXT record on your root domain enabling OCI delivery. Example: v=spf1 include:://oracleemaildelivery.com ~all
       * DKIM: In OCI Email Delivery, generate a DKIM key for your domain under DKIM Keys, then copy the generated TXT record name and value into your domain's DNS manager.
-   
+  ##Before use make sure to test the SMTP credentials on GMass or any SMTP tester so that it is working properly  
 ------------------------------
 ## Step 5: Gather All Environment Variables
 Before proceeding to the function deployment, compile your configuration list:
@@ -183,10 +185,18 @@ def handler(ctx, data: io.BytesIO = None):
         return response.Response(ctx, response_data=f"Error: {str(ex)}", headers={"Content-Type": "text/plain"})
 
 
+
+5.then create requirements.txt
+
+
+
+6. Then create func.yaml there
+
+
    1. Deploy the application using the CLI:
    
    fn -v deploy --app Your-OCI-Application-Name
-   
+
    2. Set the values in the Oracle Application environment configuration via CLI or OCI console UI:
    
    fn config app Your-OCI-Application-Name WORKER_URL "https://workers.dev"
@@ -197,7 +207,9 @@ def handler(ctx, data: io.BytesIO = None):
    fn config app Your-OCI-Application-Name SMTP_PORT "587"
    fn config app Your-OCI-Application-Name SENDER_EMAIL "sender@domain.com"
    fn config app Your-OCI-Application-Name RECEIVER_EMAIL "receiver@domain.com"
-   
+
+
+   3. Then teys the application once wieh command  fn invoke APP_NAME APPLICATION_NAME
    
 ------------------------------
 ## Step 7: Create Event Rules to Trigger the Function
