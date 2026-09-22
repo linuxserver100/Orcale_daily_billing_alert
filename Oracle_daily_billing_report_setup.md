@@ -215,7 +215,7 @@ def handler(ctx, data: io.BytesIO = None):
    fn config app Your-OCI-Application-Name RECEIVER_EMAIL "receiver@domain.com"
 
 
-   3. Then test the application once with command  fn invoke APP_NAME APPLICATION_NAME
+   3. Then test the application once with command  fn invoke APP_NAME FUNCTION_NAME
    
 ------------------------------
 ## Step 7: Create Event Rules to Trigger the Function
