@@ -110,12 +110,18 @@ Before proceeding to the function deployment, compile your configuration list:
 
 * 
 * WORKER_URL: The Cloudflare worker URL (e.g., https://workers.dev)
+* 
 * OCI_PAR_URL: The full URL string generated from Step 1.
 * SMTP_HOST: The endpoint gathered from Email Delivery Configuration.
+* 
 * SMTP_USER: The generated OCID-based SMTP username.
+* 
 * SMTP_PASS: The generated SMTP password.
+* 
 * SMTP_PORT: 587 (Recommended for TLS authentication).
+* 
 * SENDER_EMAIL: The verified Approved Sender email.
+* 
 * RECEIVER_EMAIL: The destination address where notifications should land.
 * 
 
@@ -209,7 +215,7 @@ def handler(ctx, data: io.BytesIO = None):
    fn config app Your-OCI-Application-Name RECEIVER_EMAIL "receiver@domain.com"
 
 
-   3. Then teys the application once wieh command  fn invoke APP_NAME APPLICATION_NAME
+   3. Then test the application once with command  fn invoke APP_NAME APPLICATION_NAME
    
 ------------------------------
 ## Step 7: Create Event Rules to Trigger the Function
