@@ -192,6 +192,12 @@ def handler(ctx, data: io.BytesIO = None):
 
 
 
+
+
+
+
+
+
 5.then create requirements.txt
 
 
