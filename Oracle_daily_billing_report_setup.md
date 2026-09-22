@@ -138,6 +138,7 @@ Before proceeding to the function deployment, compile your configuration list:
    
    4. Replace the contents of func.py with an implementation that connects to the bucket, fetches the newest object, and fires the email:
 
+```code
 import ioimport jsonimport loggingimport osimport smtplibfrom email.mime.text import MIMETextimport requests
 def handler(ctx, data: io.BytesIO = None):
     logging.getLogger().info("OCI Function Triggered.")
@@ -192,7 +193,7 @@ def handler(ctx, data: io.BytesIO = None):
         return response.Response(ctx, response_data=f"Error: {str(ex)}", headers={"Content-Type": "text/plain"})
 
 
-
+```
 
 
 
