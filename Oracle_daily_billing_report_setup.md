@@ -40,6 +40,7 @@ To ensure the bucket automatically empties objects 23 hours after creation:
    3. Select Create Worker, name it (e.g., oci-bucket-proxy), and click Deploy.
    4. Click Edit Code. Paste the following optimized code into your worker.js file:
 
+```code
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -77,7 +78,7 @@ export default {
     });
   }
 };
-
+```
 
    1. Click Deploy (top right).
    2. Go back to your Worker's settings page by clicking the back arrow next to the project name.
