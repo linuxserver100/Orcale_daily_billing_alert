@@ -262,8 +262,111 @@ EOF
 ```
 
 
+For laetst object in a bucket any time it will send the laetst object created in respective bucket 
+
+```code
 
 
+cat << 'EOF' > func.py
+import io
+import json
+import logging
+import os
+import urllib.request
+import urllib.parse
+import smtplib
+from email.message import EmailMessage
+from fdk import response
+
+def handler(ctx, data: io.BytesIO = None):
+    logging.getLogger().info("Oracle Function triggering custom SMTP execution plane...")
+    
+    # 1. RETRIEVE ENVIRONMENT SETTINGS
+    WORKER_BASE_URL = os.environ.get("WORKER_BASE_URL")
+    BUCKET_PAR_URL = os.environ.get("BUCKET_PAR_URL")
+    
+    # CUSTOM SMTP CONFIGURATION VARIABLES
+    SMTP_HOST = os.environ.get("SMTP_HOST")       # e.g., mail.yourserver.com
+    SMTP_PORT = os.environ.get("SMTP_PORT", 587) # Default to standard TLS port 587
+    SMTP_USER = os.environ.get("SMTP_USER")       # Mail server login username
+    SMTP_PASS = os.environ.get("SMTP_PASS")       # Mail server login password
+    SENDER_EMAIL = os.environ.get("SENDER_EMAIL")   # Authorized From: email address
+    RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL") # Destination inbox address
+    
+    if not all([WORKER_BASE_URL, BUCKET_PAR_URL, SMTP_HOST, SMTP_USER, SMTP_PASS, SENDER_EMAIL, RECEIVER_EMAIL]):
+        return response.Response(ctx, response_data="Configuration Error: Missing environment variables.", status_code=500)
+    
+    try:
+        # 2. SANITIZE BUCKET PAR URL PATH FORMAT
+        # Strips any accidental human trailing syntax typos to get a clean base URL
+        base_url = BUCKET_PAR_URL.strip()
+        if base_url.endswith('/o/') or base_url.endswith('/o'):
+            base_url = base_url.rstrip('/o').rstrip('/o/')
+        
+        # Explicitly targets the OCI object list endpoint with specific metadata selectors
+        target_url = f"{base_url.rstrip('/')}/o/?fields=name,timeCreated"
+
+        # 3. HTTP GET REQUEST TO THE BUCKET PAR URL
+        req_bucket = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
+        with urllib.request.urlopen(req_bucket) as res:
+            response_data = json.loads(res.read().decode('utf-8'))
+            
+        # 4. PARSE THE CORRECT OCI RESPONSE WRAPPER KEY
+        objects = response_data.get("objects", [])
+        if not objects:
+            return response.Response(ctx, response_data="Bucket is completely empty via PAR access.", status_code=200)
+        
+        # 5. CHRONOLOGICAL SORTING (NEWEST FIRST) - Mimics your jq sort behavior
+        objects.sort(key=lambda obj: obj.get("timeCreated", "0000"), reverse=True)
+        latest_object = objects[0]
+        object_name = latest_object.get("name")
+        time_created = latest_object.get("timeCreated")
+        
+        # 6. STITCH CLEAN CLOUDFLARE WORKER LINK
+        # URL encodes special symbols/spaces in the file name so the email hyperlink doesn't break
+        safe_object_name = urllib.parse.quote(object_name)
+        final_shareable_url = f"{WORKER_BASE_URL.rstrip('/')}/{safe_object_name}"
+        
+        # 7. ASSEMBLE STANDARD SMTP MAIL CONTAINER
+        msg = EmailMessage()
+        msg['Subject'] = f"🚀 OCI Cost Report Alert: {object_name.split('/')[-1]}"
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
+        
+        email_body = (
+            f"The automated pipeline has scanned your bucket via your secure PAR URL configuration.\n\n"
+            f"Latest File Name Identified: {object_name}\n"
+            f"Time Created: {time_created}\n\n"
+            f"Your Secure Cloudflare Worker Link:\n{final_shareable_url}"
+        )
+        msg.set_content(email_body)
+        
+        # 8. ESTABLISH SECURE CONNECTION AND TRANSMIT
+        port_int = int(SMTP_PORT)
+        if port_int == 465:
+            with smtplib.SMTP_SSL(SMTP_HOST, port_int) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, port_int) as server:
+                server.ehlo()
+                if port_int == 587:
+                    server.starttls() 
+                    server.ehlo()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(msg)
+            
+        return response.Response(ctx, response_data=f"Success! Custom SMTP email sent for: {object_name}", status_code=200)
+            
+    except Exception as ex:
+        logging.getLogger().error(f"Function processing failure: {str(ex)}")
+        return response.Response(ctx, response_data=f"Custom SMTP Execution error: {str(ex)}", status_code=500)
+EOF
+
+
+
+
+```
 
 
 5.then create requirements.txt
